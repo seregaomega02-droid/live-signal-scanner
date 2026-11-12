@@ -1,9 +1,4 @@
-Create AndroidManifest.xml
-        run: |
-          mkdir -p app/src/main
-          cat > app/src/main/AndroidManifest.xml <<'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+:android="http://schemas.android.com/apk/res/android">
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
               <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
@@ -30,4 +25,4 @@ Create AndroidManifest.xml
         uses: actions/upload-artifact@v4
         with:
           name: live-signal-scanner-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: app/build/outputs
