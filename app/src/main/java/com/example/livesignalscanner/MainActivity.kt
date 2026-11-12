@@ -14,12 +14,19 @@ import android.os.Bundle
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONObject
 
 class MainActivity : Activity() {
 
+    private val API_KEY = "4772d916a7a47686fe788852923950cc"
+    private val client = OkHttpClient()
     private lateinit var status: TextView
+    private lateinit var results: TextView
     private var soundEnabled = true
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -28,9 +35,9 @@ class MainActivity : Activity() {
         val prefs = getSharedPreferences("settings", Context.MODE_PRIVATE)
         soundEnabled = prefs.getBoolean("sound", true)
 
+        val root = ScrollView(this)
         val layout = LinearLayout(this)
         layout.orientation = LinearLayout.VERTICAL
-        layout.gravity = Gravity.CENTER
         layout.setPadding(40, 60, 40, 40)
 
         val bg = GradientDrawable(
@@ -47,14 +54,19 @@ class MainActivity : Activity() {
 
         status = TextView(this)
         status.text = "Готов к работе"
-        status.textSize = 18f
+        status.textSize = 16f
         status.setTextColor(Color.parseColor("#9CA3AF"))
         status.gravity = Gravity.CENTER
-        status.setPadding(0, 40, 0, 40)
+        status.setPadding(0, 30, 0, 30)
+
+        results = TextView(this)
+        results.text = ""
+        results.textSize = 14f
+        results.setTextColor(Color.WHITE)
 
         val scanBtn = Button(this)
         scanBtn.text = "Сканировать"
-        scanBtn.setOnClickListener { status.text = "Сканирование..." }
+        scanBtn.setOnClickListener { scanLive() }
 
         val settingsBtn = Button(this)
         settingsBtn.text = "Настройки"
@@ -62,20 +74,129 @@ class MainActivity : Activity() {
 
         val testBtn = Button(this)
         testBtn.text = "Тест уведомления"
-        testBtn.setOnClickListener { sendTestNotification() }
+        testBtn.setOnClickListener { sendNotification("Тестовое уведомление", "Проверка звука") }
 
         layout.addView(title)
         layout.addView(status)
         layout.addView(scanBtn)
         layout.addView(settingsBtn)
         layout.addView(testBtn)
+        layout.addView(results)
 
-        setContentView(layout)
+        root.addView(layout)
+        setContentView(root)
 
         if (Build.VERSION.SDK_INT >= 33 &&
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
+    }
+
+    private fun scanLive() {
+        status.text = "Сканирование..."
+        Thread {
+            try {
+                val req = Request.Builder()
+                    .url("https://v3.football.api-sports.io/fixtures?live=all")
+                    .addHeader("x-apisports-key", API_KEY)
+                    .build()
+
+                val resp = client.newCall(req).execute()
+                val body = resp.body?.string() ?: ""
+                val json = JSONObject(body)
+                val arr = json.getJSONArray("response")
+
+                val sb = StringBuilder()
+
+                for (i in 0 until arr.length()) {
+                    val f = arr.getJSONObject(i)
+                    val fixture = f.getJSONObject("fixture")
+                    val st = fixture.getJSONObject("status")
+                    val short = st.optString("short")
+                    val elapsed = st.optInt("elapsed", 0)
+                    val goals = f.getJSONObject("goals")
+                    val home = goals.optInt("home", 0)
+                    val away = goals.optInt("away", 0)
+
+                    if (short == "1H" && elapsed >= 20 && home + away == 1) {
+                        val id = fixture.optInt("id")
+                        val teams = f.getJSONObject("teams")
+                        val homeName = teams.getJSONObject("home").optString("name")
+                        val awayName = teams.getJSONObject("away").optString("name")
+
+                        val odds = getOdds(id)
+                        if (odds != null) {
+                            val over15 = odds.first
+                            val btts = odds.second
+
+                            if (over15 < 2.00 && btts <= 2.00) {
+                                sb.append("СИГНАЛ\n")
+                                sb.append("$homeName — $awayName\n")
+                                sb.append("Время: $elapsed'\n")
+                                sb.append("ТБ 1.5: $over15\n")
+                                sb.append("Обе забьют: $btts\n\n")
+
+                                val text = "$homeName — $awayName | $elapsed'"
+                                runOnUiThread { sendNotification("Сигнал", text) }
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread {
+                    results.text = if (sb.isEmpty()) "Сигналов нет" else sb.toString()
+                    status.text = "Готово"
+                }
+            } catch (e: Exception) {
+                runOnUiThread {
+                    status.text = "Ошибка: ${e.message}"
+                }
+            }
+        }.start()
+    }
+
+    private fun getOdds(fixtureId: Int): Pair<Double, Double>? {
+        return try {
+            val req = Request.Builder()
+                .url("https://v3.football.api-sports.io/odds/live?fixture=$fixtureId")
+                .addHeader("x-apisports-key", API_KEY)
+                .build()
+
+            val resp = client.newCall(req).execute()
+            val body = resp.body?.string() ?: return null
+            val json = JSONObject(body)
+            val arr = json.getJSONArray("response")
+            if (arr.length() == 0) return null
+
+            var over15 = -1.0
+            var btts = -1.0
+
+            val bookmakers = arr.getJSONObject(0).getJSONArray("bookmakers")
+            for (b in 0 until bookmakers.length()) {
+                val bets = bookmakers.getJSONObject(b).getJSONArray("bets")
+                for (j in 0 until bets.length()) {
+                    val bet = bets.getJSONObject(j)
+                    val name = bet.optString("name")
+                    val values = bet.getJSONArray("values")
+                    for (k in 0 until values.length()) {
+                        val v = values.getJSONObject(k)
+                        val value = v.optString("value")
+                        val odd = v.optString("odd").toDoubleOrNull() ?: continue
+
+                        if (name.contains("Goals Over/Under", true) && value == "Over 1.5") {
+                            over15 = odd
+                        }
+                        if (name.contains("Both Teams Score", true) && value == "Yes") {
+                            btts = odd
+                        }
+                    }
+                }
+            }
+
+            if (over15 > 0 && btts > 0) Pair(over15, btts) else null
+        } catch (e: Exception) {
+            null
         }
     }
 
@@ -96,7 +217,7 @@ class MainActivity : Activity() {
             .show()
     }
 
-    private fun sendTestNotification() {
+    private fun sendNotification(title: String, text: String) {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= 26) {
             nm.createNotificationChannel(
@@ -109,12 +230,11 @@ class MainActivity : Activity() {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
         }
-        builder.setContentTitle("Live Signal Scanner")
-            .setContentText("Тестовое уведомление")
+        builder.setContentTitle(title)
+            .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_dialog_info)
             .setAutoCancel(true)
         if (!soundEnabled) builder.setDefaults(0)
         nm.notify(1, builder.build())
-        status.text = "Уведомление отправлено"
     }
 }
