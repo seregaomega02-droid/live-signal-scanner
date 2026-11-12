@@ -11,6 +11,8 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.view.Gravity
 import android.widget.Button
 import android.widget.LinearLayout
@@ -25,9 +27,17 @@ class MainActivity : Activity() {
 
     private val API_KEY = "4772d916a7a47686fe788852923950cc"
     private val client = OkHttpClient()
+    private val handler = Handler(Looper.getMainLooper())
     private lateinit var status: TextView
     private lateinit var results: TextView
     private var soundEnabled = true
+
+    private val autoScan = object : Runnable {
+        override fun run() {
+            scanLive()
+            handler.postDelayed(this, 30000)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,7 +63,7 @@ class MainActivity : Activity() {
         title.gravity = Gravity.CENTER
 
         status = TextView(this)
-        status.text = "Готов к работе"
+        status.text = "Автосканирование каждые 30 сек"
         status.textSize = 16f
         status.setTextColor(Color.parseColor("#9CA3AF"))
         status.gravity = Gravity.CENTER
@@ -65,7 +75,7 @@ class MainActivity : Activity() {
         results.setTextColor(Color.WHITE)
 
         val scanBtn = Button(this)
-        scanBtn.text = "Сканировать"
+        scanBtn.text = "Сканировать сейчас"
         scanBtn.setOnClickListener { scanLive() }
 
         val settingsBtn = Button(this)
@@ -91,6 +101,13 @@ class MainActivity : Activity() {
         ) {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
+
+        handler.postDelayed(autoScan, 0)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        handler.removeCallbacks(autoScan)
     }
 
     private fun scanLive() {
@@ -146,7 +163,7 @@ class MainActivity : Activity() {
 
                 runOnUiThread {
                     results.text = if (sb.isEmpty()) "Сигналов нет" else sb.toString()
-                    status.text = "Готово"
+                    status.text = "Следующее сканирование через 30 сек"
                 }
             } catch (e: Exception) {
                 runOnUiThread {
