@@ -21,6 +21,7 @@ import android.widget.TextView
 import android.widget.Toast
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
 
 class MainActivity : Activity() {
@@ -30,6 +31,7 @@ class MainActivity : Activity() {
     private val handler = Handler(Looper.getMainLooper())
     private lateinit var status: TextView
     private lateinit var results: TextView
+    private lateinit var historyView: TextView
     private var soundEnabled = true
 
     private val autoScan = object : Runnable {
@@ -74,6 +76,12 @@ class MainActivity : Activity() {
         results.textSize = 14f
         results.setTextColor(Color.WHITE)
 
+        historyView = TextView(this)
+        historyView.text = loadHistory()
+        historyView.textSize = 14f
+        historyView.setTextColor(Color.parseColor("#FBBF24"))
+        historyView.setPadding(0, 30, 0, 0)
+
         val scanBtn = Button(this)
         scanBtn.text = "Сканировать сейчас"
         scanBtn.setOnClickListener { scanLive() }
@@ -81,6 +89,10 @@ class MainActivity : Activity() {
         val settingsBtn = Button(this)
         settingsBtn.text = "Настройки"
         settingsBtn.setOnClickListener { showSettings() }
+
+        val clearBtn = Button(this)
+        clearBtn.text = "Очистить историю"
+        clearBtn.setOnClickListener { clearHistory() }
 
         val testBtn = Button(this)
         testBtn.text = "Тест уведомления"
@@ -90,8 +102,10 @@ class MainActivity : Activity() {
         layout.addView(status)
         layout.addView(scanBtn)
         layout.addView(settingsBtn)
+        layout.addView(clearBtn)
         layout.addView(testBtn)
         layout.addView(results)
+        layout.addView(historyView)
 
         root.addView(layout)
         setContentView(root)
@@ -148,14 +162,14 @@ class MainActivity : Activity() {
                             val btts = odds.second
 
                             if (over15 < 2.00 && btts <= 2.00) {
-                                sb.append("СИГНАЛ\n")
-                                sb.append("$homeName — $awayName\n")
-                                sb.append("Время: $elapsed'\n")
-                                sb.append("ТБ 1.5: $over15\n")
-                                sb.append("Обе забьют: $btts\n\n")
+                                val signal = "СИГНАЛ\n$homeName — $awayName\nВремя: $elapsed'\nТБ 1.5: $over15\nОбе забьют: $btts"
+                                sb.append(signal).append("\n\n")
 
-                                val text = "$homeName — $awayName | $elapsed'"
-                                runOnUiThread { sendNotification("Сигнал", text) }
+                                saveSignal(signal)
+                                runOnUiThread {
+                                    historyView.text = loadHistory()
+                                    sendNotification("Сигнал", "$homeName — $awayName | $elapsed'")
+                                }
                             }
                         }
                     }
@@ -215,6 +229,33 @@ class MainActivity : Activity() {
         } catch (e: Exception) {
             null
         }
+    }
+
+    private fun saveSignal(signal: String) {
+        val prefs = getSharedPreferences("history", Context.MODE_PRIVATE)
+        val arr = JSONArray(prefs.getString("signals", "[]"))
+        val time = java.text.SimpleDateFormat("dd.MM HH:mm", java.util.Locale.getDefault())
+            .format(java.util.Date())
+        arr.put("[$time] $signal")
+        prefs.edit().putString("signals", arr.toString()).apply()
+    }
+
+    private fun loadHistory(): String {
+        val prefs = getSharedPreferences("history", Context.MODE_PRIVATE)
+        val arr = JSONArray(prefs.getString("signals", "[]"))
+        if (arr.length() == 0) return "История пуста"
+        val sb = StringBuilder("ИСТОРИЯ СИГНАЛОВ\n\n")
+        for (i in arr.length() - 1 downTo 0) {
+            sb.append(arr.getString(i)).append("\n\n")
+        }
+        return sb.toString()
+    }
+
+    private fun clearHistory() {
+        getSharedPreferences("history", Context.MODE_PRIVATE)
+            .edit().putString("signals", "[]").apply()
+        historyView.text = "История пуста"
+        Toast.makeText(this, "История очищена", Toast.LENGTH_SHORT).show()
     }
 
     private fun showSettings() {
